@@ -1,0 +1,76 @@
+name: Build & Release Agent
+
+# Push a tag like v2.0.1 -> builds win-x64 self-contained exe and publishes a GitHub Release.
+# Push/PR to main -> build only (package kept as a workflow artifact for 14 days).
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      DOTNET_NOLOGO: true
+      DOTNET_CLI_TELEMETRY_OPTOUT: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="0.0.0-ci.${GITHUB_RUN_NUMBER}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "package=OfficeMonitoringAgent-${VERSION}-win-x64" >> "$GITHUB_OUTPUT"
+
+      - name: Publish
+        run: >
+          dotnet publish WindowsMonitoringAgent.csproj -c Release -r win-x64
+          --self-contained true
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:DebugType=none
+          -p:Version=${{ steps.ver.outputs.version }}
+          -warnaserror:NU1901,NU1902,NU1903,NU1904
+          -o dist/pkg/publish
+
+      - name: Package
+        run: |
+          cp -r deploy dist/pkg/deploy
+          cp README.md README-V2.md dist/pkg/
+          cd dist/pkg
+          zip -r "../${{ steps.ver.outputs.package }}.zip" .
+          cd ..
+          sha256sum "${{ steps.ver.outputs.package }}.zip" > "${{ steps.ver.outputs.package }}.zip.sha256"
+          ls -la
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.ver.outputs.package }}
+          path: dist/${{ steps.ver.outputs.package }}.zip*
+          retention-days: 14
+
+      - name: Create GitHub Release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "dist/${{ steps.ver.outputs.package }}.zip" \
+            "dist/${{ steps.ver.outputs.package }}.zip.sha256" \
+            --title "Office Monitoring Agent $GITHUB_REF_NAME" \
+            --generate-notes
