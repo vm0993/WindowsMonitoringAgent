@@ -11,7 +11,9 @@ public sealed record DfsrResult(
     string Id, string Code, string GroupName, string FolderName,
     string SourceComputer, string DestinationComputer, string ServiceStatus,
     long? BacklogCount, string Status, string? Error,
-    DateTimeOffset CheckedAtUtc);
+    DateTimeOffset CheckedAtUtc,
+    // ServiceStatus is the DFSR service on the probing host only; each side of the route is measured separately.
+    string? ProbeHost = null, string? SourceServiceStatus = null, string? DestinationServiceStatus = null);
 // Envelope names must be snake_case: VerifyMonitoringAgent reads "agent_id" (camelCase "agentId" => 401).
 // DfsrResult fields stay camelCase (web defaults), matching AgentController::dfsr validation.
 public sealed record DfsrBatch(
@@ -41,14 +43,14 @@ public sealed class DfsrAgent : BackgroundService
                     var value=await RunAsync(route, stop);
                     _store.AppendDfsr(new DfsrResult(Guid.NewGuid().ToString("N"),route.Code,route.GroupName,route.FolderName,
                         route.SourceComputer,route.DestinationComputer,value.ServiceStatus,value.BacklogCount,
-                        value.Status,value.Error,now));
+                        value.Status,value.Error,now,Environment.MachineName,value.SourceServiceStatus,value.DestinationServiceStatus));
                 }
                 catch (OperationCanceledException) when(stop.IsCancellationRequested) { break; }
                 catch(Exception ex)
                 {
                     _log.LogWarning(ex,"DFSR probe failed for {Route}",route.Code);
                     _store.AppendDfsr(new DfsrResult(Guid.NewGuid().ToString("N"),route.Code,route.GroupName,route.FolderName,
-                        route.SourceComputer,route.DestinationComputer,"unknown",null,"unknown",ex.Message,now));
+                        route.SourceComputer,route.DestinationComputer,"unknown",null,"unknown",ex.Message,now,Environment.MachineName));
                 }
             }
             try { await Task.Delay(TimeSpan.FromSeconds(Math.Max(30,_cfg.Dfsr.IntervalSeconds)),stop); }
@@ -78,15 +80,31 @@ public sealed class DfsrAgent : BackgroundService
         return JsonSerializer.Deserialize<ProbeResult>(output, new JsonSerializerOptions { PropertyNameCaseInsensitive=true })
             ?? throw new InvalidOperationException("Empty DFSR response");
     }
-    private sealed record ProbeResult(string ServiceStatus,long? BacklogCount,string Status,string? Error);
+    private sealed record ProbeResult(string ServiceStatus,long? BacklogCount,string Status,string? Error,string? SourceServiceStatus,string? DestinationServiceStatus);
     private const string EmbeddedScript = """
         $ErrorActionPreference='Stop'
         $r=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('__ROUTE_BASE64__')) | ConvertFrom-Json
+        function Get-DfsrServiceStatus([string]$computer) {
+          try {
+            $short=if([string]::IsNullOrWhiteSpace($computer)){''}else{$computer.Split('.')[0]}
+            if($short -eq '' -or $short -ieq $env:COMPUTERNAME -or $short -ieq 'localhost') {
+              $svc=Get-Service -Name DFSR -ErrorAction Stop
+            } else {
+              $svc=Get-Service -Name DFSR -ComputerName $computer -ErrorAction Stop
+            }
+            return $svc.Status.ToString().ToLowerInvariant()
+          } catch { return 'unknown' }
+        }
+        $local='unknown';$src='unknown';$dst='unknown'
         try {
           Import-Module DFSR -ErrorAction Stop
-          $service=(Get-Service -Name DFSR -ErrorAction Stop).Status.ToString().ToLowerInvariant()
-          if($service -ne 'running') {
-            @{serviceStatus=$service;backlogCount=$null;status='critical';error='DFSR service not running'} | ConvertTo-Json -Compress
+          $local=Get-DfsrServiceStatus $env:COMPUTERNAME
+          $src=Get-DfsrServiceStatus $r.SourceComputer
+          $dst=Get-DfsrServiceStatus $r.DestinationComputer
+          $stopped=@(@{n=$r.SourceComputer;s=$src},@{n=$r.DestinationComputer;s=$dst} | Where-Object {$_.s -ne 'running' -and $_.s -ne 'unknown'})
+          if($stopped.Count -gt 0) {
+            $names=($stopped | ForEach-Object {"$($_.n)=$($_.s)"}) -join ', '
+            @{serviceStatus=$local;sourceServiceStatus=$src;destinationServiceStatus=$dst;backlogCount=$null;status='critical';error="DFSR service not running: $names"} | ConvertTo-Json -Compress
             exit 0
           }
           $output=@(Get-DfsrBacklog -GroupName $r.GroupName -FolderName $r.FolderName -SourceComputerName $r.SourceComputer -DestinationComputerName $r.DestinationComputer -Verbose 4>&1 -ErrorAction Stop)
@@ -99,9 +117,9 @@ public sealed class DfsrAgent : BackgroundService
           $items=@($output | Where-Object {$_ -isnot [System.Management.Automation.VerboseRecord]})
           if($null -eq $count -and $items.Count -eq 0) {$count=0}
           $state=if($null -eq $count){'unknown'}elseif($count -eq 0){'caught_up'}else{'backlog'}
-          @{serviceStatus=$service;backlogCount=$count;status=$state;error=$null} | ConvertTo-Json -Compress
+          @{serviceStatus=$local;sourceServiceStatus=$src;destinationServiceStatus=$dst;backlogCount=$count;status=$state;error=$null} | ConvertTo-Json -Compress
         } catch {
-          @{serviceStatus='unknown';backlogCount=$null;status='unknown';error=$_.Exception.Message} | ConvertTo-Json -Compress
+          @{serviceStatus=$local;sourceServiceStatus=$src;destinationServiceStatus=$dst;backlogCount=$null;status='unknown';error=$_.Exception.Message} | ConvertTo-Json -Compress
         }
         """;
 }

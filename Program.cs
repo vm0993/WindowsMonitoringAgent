@@ -16,4 +16,14 @@ builder.Services.AddSingleton<FolderAgent>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<FolderAgent>());
 builder.Services.AddHostedService<DeliveryAgent>();
 builder.Services.AddHostedService<DfsrAgent>();
+// Syncthing's GUI uses a self-signed certificate by default; accept it only for the local loopback API.
+builder.Services.AddHttpClient("syncthing", client => client.Timeout = TimeSpan.FromSeconds(20))
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+    {
+        ServerCertificateCustomValidationCallback = (request, _, _, errors) =>
+            errors == System.Net.Security.SslPolicyErrors.None || request.RequestUri?.IsLoopback == true
+    });
+builder.Services.AddHostedService<SyncthingAgent>();
+builder.Services.AddHostedService<TailscaleAgent>();
+builder.Services.AddHostedService<ParityAgent>();
 await builder.Build().RunAsync();
