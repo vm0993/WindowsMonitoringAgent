@@ -1,7 +1,7 @@
 name: Build & Release Agent
 
-# Push a tag like v2.0.1 -> builds win-x64 self-contained exe and publishes a GitHub Release.
-# Push/PR to main -> build only (package kept as a workflow artifact for 14 days).
+# Push a tag like v2.0.1 -> builds win-x64 self-contained exe, the zip package and the setup.exe installer,
+# and publishes a GitHub Release. Push/PR to main -> build only (kept as workflow artifacts for 14 days).
 on:
   push:
     branches: [main]
@@ -16,6 +16,10 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      package: ${{ steps.ver.outputs.package }}
+      file_version: ${{ steps.ver.outputs.file_version }}
     env:
       DOTNET_NOLOGO: true
       DOTNET_CLI_TELEMETRY_OPTOUT: true
@@ -31,10 +35,13 @@ jobs:
         run: |
           if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
             VERSION="${GITHUB_REF_NAME#v}"
+            FILE_VERSION="${VERSION%%-*}"
           else
             VERSION="0.0.0-ci.${GITHUB_RUN_NUMBER}"
+            FILE_VERSION="0.0.0.${GITHUB_RUN_NUMBER}"
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "file_version=$FILE_VERSION" >> "$GITHUB_OUTPUT"
           echo "package=OfficeMonitoringAgent-${VERSION}-win-x64" >> "$GITHUB_OUTPUT"
 
       - name: Publish
@@ -64,13 +71,61 @@ jobs:
           path: dist/${{ steps.ver.outputs.package }}.zip*
           retention-days: 14
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: publish
+          path: dist/pkg/publish
+          retention-days: 1
+
+  installer:
+    needs: build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: publish
+          path: publish
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=${{ needs.build.outputs.version }}" "/DFileVersion=${{ needs.build.outputs.file_version }}" "/DPublishDir=..\publish" installer\OfficeMonitoringAgent.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $setup = Get-Item "dist\OfficeMonitoringAgent-Setup-*.exe"
+          "$((Get-FileHash $setup -Algorithm SHA256).Hash.ToLower())  $($setup.Name)" | Set-Content -NoNewline -Encoding ascii "$($setup.FullName).sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OfficeMonitoringAgent-Setup-${{ needs.build.outputs.version }}
+          path: dist/OfficeMonitoringAgent-Setup-*
+          retention-days: 14
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: [build, installer]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
       - name: Create GitHub Release
-        if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            "dist/${{ steps.ver.outputs.package }}.zip" \
-            "dist/${{ steps.ver.outputs.package }}.zip.sha256" \
+          ls -la dist
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            dist/OfficeMonitoringAgent-Setup-*.exe \
+            dist/OfficeMonitoringAgent-Setup-*.exe.sha256 \
+            "dist/${{ needs.build.outputs.package }}.zip" \
+            "dist/${{ needs.build.outputs.package }}.zip.sha256" \
             --title "Office Monitoring Agent $GITHUB_REF_NAME" \
             --generate-notes

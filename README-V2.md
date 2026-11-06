@@ -11,6 +11,23 @@ This package extends v1 without changing the existing file events and heartbeat 
 
 `caught_up` means **backlog count 0 at query time**, NOT proof that every file matches, not proof of backup, and not proof DFSR membership is healthy. Alert logic must incorporate freshness, health checks and DFSR Event Log (future enhancement).
 
+## Installer (setup.exe)
+
+`installer/OfficeMonitoringAgent.iss` (Inno Setup 6) builds `OfficeMonitoringAgent-Setup-<version>.exe`. The release workflow attaches it to each tagged GitHub Release. To build it locally, run `installer/build.sh [version]` on macOS/Linux (needs Docker), or `iscc` on Windows.
+
+The wizard asks for the server role (fs-utama/fs-mirror/fs-dc), API URL, AgentId, Site, token, optional Syncthing API key, and the data root folder. It then:
+
+- creates `appsettings.json` from the role example;
+- installs the service;
+- stores the keys in the service's own `Environment` registry value, so no reboot is needed;
+- trusts `installer/certs/monitoring.crt` when that file was present at build time;
+- tests `<ApiBaseUrl>/up`;
+- starts the service.
+
+On upgrade, the existing config and token are kept. `installer/configure.ps1` (installed to `tools\`) can be rerun to reconfigure. Silent install: see the header of the `.iss` file.
+
+The steps below describe the manual install without the installer.
+
 ## Fast installation (Windows Server 2022/2025)
 
 1. Ensure DFS Replication service and DFSR PowerShell module available. Create/test DFSR replication groups separately; **this agent will not configure or alter DFSR**.

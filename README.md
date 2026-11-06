@@ -76,7 +76,7 @@ Server MUST insert events using a UNIQUE `(agent_id, id)` key and commit the ent
 {
  "agent_id":"fs01-office","site":"office","host_name":"FS01",
  "observed_at_utc":"2026-10-16T06:00:00+00:00","pending_events":0,
- "folders":[{"code":"finance","name":"Keuangan","root":"D:\\Shared\\Keuangan","available":true,"last_change_at_utc":null,"watcher_error_at_utc":null}]
+ "folders":[{"code":"finance","name":"Keuangan","root":"D:\\Keuangan","available":true,"last_change_at_utc":null,"watcher_error_at_utc":null}]
 }
 ```
 
@@ -94,7 +94,7 @@ Apply backend request rate limiting, token revocation/rotation, TLS verification
 
 ## Verify
 - Start service and check `Get-Service OfficeMonitoringAgent`.
-- Save a file to `D:\Shared\Keuangan`, then rename and delete it.
+- Save a file to `D:\Keuangan`, then rename and delete it.
 - Verify POST batches and persisted events in Laravel.
 - Block API temporarily: SQLite `pending_events` should accumulate and drain when connectivity returns.
 - Restart service and confirm queue persists.
