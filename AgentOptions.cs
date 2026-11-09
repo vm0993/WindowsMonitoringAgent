@@ -4,7 +4,10 @@ public sealed class AgentOptions
 {
     public string AgentId { get; set; } = "fs01-office";
     public string Site { get; set; } = "office";
-    public string ApiBaseUrl { get; set; } = "https://monitor.example.com";
+    public string ApiBaseUrl { get; set; } = "https://TAILSCALE-IP";
+    // ApiBaseUrl must be the monitoring server's Tailscale IP (100.64.0.0/10 or fd7a:115c:a1e0::/48), no host names:
+    // agent data never travels over the office LAN or the public internet.
+    public bool RequireTailscaleApi { get; set; } = true;
     public string ApiKeyEnvironmentVariable { get; set; } = "MONITOR_AGENT_API_KEY";
     public string DataDirectory { get; set; } = @"C:\ProgramData\OfficeMonitoringAgent";
     public int BatchSize { get; set; } = 200;

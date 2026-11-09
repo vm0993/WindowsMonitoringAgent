@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -44,6 +45,8 @@ public sealed class DeliveryAgent : BackgroundService
         if(string.IsNullOrWhiteSpace(key)) { _log.LogCritical("Missing API key in environment variable {Env}",_cfg.ApiKeyEnvironmentVariable); return; }
         if (!Uri.TryCreate(_cfg.ApiBaseUrl,UriKind.Absolute,out var uri) || uri.Scheme != Uri.UriSchemeHttps)
         { _log.LogCritical("ApiBaseUrl must be HTTPS"); return; }
+        if (_cfg.RequireTailscaleApi && !(IPAddress.TryParse(uri.Host.Trim('[',']'),out _) && SyncthingAgent.IsTailscaleAddress(uri.Host)==true))
+        { _log.LogCritical("ApiBaseUrl {Url} is not a Tailscale IP (100.64.0.0/10 or fd7a:115c:a1e0::/48)",_cfg.ApiBaseUrl); return; }
         while(!stoppingToken.IsCancellationRequested)
         {
             try

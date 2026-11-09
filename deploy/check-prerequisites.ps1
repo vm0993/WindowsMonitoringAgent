@@ -4,7 +4,19 @@ Write-Host 'Windows Monitoring Agent v2 - preflight checks'
 if(-not $IsWindows -and $PSVersionTable.PSEdition -eq 'Core') { throw 'Must run on Windows' }
 if(-not (Test-Path $ConfigPath)) { throw "Config not found: $ConfigPath" }
 $c=Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
+# Tailscale IP only: 100.64.0.0/10 or fd7a:115c:a1e0::/48. Host names, LAN and public IPs are refused.
+function Test-TailscaleUrl([string]$Url) {
+    try { $h = ([Uri]$Url).Host.Trim('[', ']').ToLowerInvariant() } catch { return $false }
+    $ip = $null
+    if (-not [Net.IPAddress]::TryParse($h, [ref]$ip)) { return $false }
+    $b = $ip.GetAddressBytes()
+    if ($b.Length -eq 4) { return $b[0] -eq 100 -and $b[1] -ge 64 -and $b[1] -le 127 }
+    return $b[0] -eq 0xfd -and $b[1] -eq 0x7a -and $b[2] -eq 0x11 -and $b[3] -eq 0x5c -and $b[4] -eq 0xa1 -and $b[5] -eq 0xe0
+}
 if($c.Agent.ApiBaseUrl -notmatch '^https://') { throw 'API URL must use HTTPS' }
+if($c.Agent.RequireTailscaleApi -ne $false -and -not (Test-TailscaleUrl $c.Agent.ApiBaseUrl)) { throw "API URL $($c.Agent.ApiBaseUrl) must be a Tailscale IP (100.64.0.0/10)" }
+try { $r=Invoke-WebRequest -Uri "$($c.Agent.ApiBaseUrl.TrimEnd('/'))/up" -UseBasicParsing -TimeoutSec 15; Write-Host "OK monitoring API over Tailscale: HTTP $($r.StatusCode)" }
+catch { Write-Warning "Monitoring API $($c.Agent.ApiBaseUrl)/up not reachable: $($_.Exception.Message)" }
 if([string]::IsNullOrWhiteSpace($c.Agent.AgentId)) { throw 'AgentId required' }
 foreach($f in $c.Agent.Folders){
  if(Test-Path -LiteralPath $f.Path -PathType Container){Write-Host "OK folder: $($f.Path)"}

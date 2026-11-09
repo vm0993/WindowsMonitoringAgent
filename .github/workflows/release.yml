@@ -96,7 +96,7 @@ jobs:
       - name: Build installer
         shell: pwsh
         run: |
-          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=${{ needs.build.outputs.version }}" "/DFileVersion=${{ needs.build.outputs.file_version }}" "/DPublishDir=..\publish" installer\OfficeMonitoringAgent.iss
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=${{ needs.build.outputs.version }}" "/DFileVersion=${{ needs.build.outputs.file_version }}" "/DPublishDir=..\publish" "/DDefaultApiUrl=${{ vars.MONITOR_API_URL }}" installer\OfficeMonitoringAgent.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $setup = Get-Item "dist\OfficeMonitoringAgent-Setup-*.exe"
           "$((Get-FileHash $setup -Algorithm SHA256).Hash.ToLower())  $($setup.Name)" | Set-Content -NoNewline -Encoding ascii "$($setup.FullName).sha256"

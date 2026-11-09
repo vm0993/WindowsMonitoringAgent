@@ -17,6 +17,15 @@ param(
 $ErrorActionPreference = 'Stop'
 $service = 'OfficeMonitoringAgent'
 $utf8 = New-Object System.Text.UTF8Encoding($false)
+# Tailscale IP only: 100.64.0.0/10 or fd7a:115c:a1e0::/48. Host names, LAN and public IPs are refused.
+function Test-TailscaleUrl([string]$Url) {
+    try { $h = ([Uri]$Url).Host.Trim('[', ']').ToLowerInvariant() } catch { return $false }
+    $ip = $null
+    if (-not [Net.IPAddress]::TryParse($h, [ref]$ip)) { return $false }
+    $b = $ip.GetAddressBytes()
+    if ($b.Length -eq 4) { return $b[0] -eq 100 -and $b[1] -ge 64 -and $b[1] -le 127 }
+    return $b[0] -eq 0xfd -and $b[1] -eq 0x7a -and $b[2] -eq 0x11 -and $b[3] -eq 0x5c -and $b[4] -eq 0xa1 -and $b[5] -eq 0xe0
+}
 
 if ($ReadConfig) {
     $a = (Get-Content -LiteralPath $ReadConfig -Raw | ConvertFrom-Json).Agent
@@ -37,6 +46,12 @@ if ($fresh) {
 
 $json = Get-Content -LiteralPath $config -Raw | ConvertFrom-Json
 if ($ApiBaseUrl) { $json.Agent.ApiBaseUrl = $ApiBaseUrl.TrimEnd('/') }
+if (-not (Test-TailscaleUrl $json.Agent.ApiBaseUrl)) {
+    throw "ApiBaseUrl $($json.Agent.ApiBaseUrl) bukan IP Tailscale (100.64.0.0/10). Jalankan ulang dengan -ApiBaseUrl https://<IP Tailscale server monitoring>"
+}
+if ($json.Agent.PSObject.Properties.Name -notcontains 'RequireTailscaleApi') {
+    $json.Agent | Add-Member -NotePropertyName RequireTailscaleApi -NotePropertyValue $true
+} else { $json.Agent.RequireTailscaleApi = $true }
 if ($AgentId) { $json.Agent.AgentId = $AgentId }
 if ($Site) { $json.Agent.Site = $Site }
 # Only on a fresh install: on upgrade the folder list may already have been edited by hand.

@@ -2,9 +2,13 @@
 ;   iscc /DAppVersion=2.1.0 /DPublishDir=..\publish installer\OfficeMonitoringAgent.iss
 ; (/DFileVersion=x.y.z[.n] is needed when AppVersion is not numeric, e.g. 0.0.0-ci.5)
 ; Silent install (all values optional on upgrade):
-;   OfficeMonitoringAgent-Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /ROLE=fs-utama /APIURL=https://192.168.66.203
+;   OfficeMonitoringAgent-Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /ROLE=fs-utama /APIURL=https://100.x.y.z
 ;     /AGENTID=fs-utama /SITE=office /TOKEN=<token> [/SYNCTHINGKEY=<key>] [/DATAROOT=D:\] [/CERT=C:\monitor.crt]
 ;     [/TASKS="startservice,trustcert"]
+; The monitoring server is reached ONLY over its Tailscale IP (100.64.0.0/10, fd7a:115c:a1e0::/48); host names, LAN and
+; public IPs are refused. Bake the default in at build time with /DDefaultApiUrl=https://100.x.y.z (installer/build.sh and
+; the release workflow pass MONITOR_API_URL). certs\monitoring.crt = the server's self-signed certificate for that IP
+; (made with installer/make-cert.sh); it is imported into Trusted Root by the "trustcert" task.
 
 #ifndef AppVersion
   #define AppVersion "2.0.0"
@@ -16,7 +20,7 @@
   #define PublishDir "..\publish"
 #endif
 #ifndef DefaultApiUrl
-  #define DefaultApiUrl "https://192.168.66.203"
+  #define DefaultApiUrl ""
 #endif
 #define ServiceName "OfficeMonitoringAgent"
 ; Put the monitoring server certificate here to ship it with the installer (public certificate only, never the key).
@@ -187,6 +191,65 @@ begin
   Result := Result + Name + '=' + Value;
 end;
 
+{ Host part of an https:// URL, lowercase, without port or IPv6 brackets. }
+function UrlHost(Url: String): String;
+var
+  At: Integer;
+begin
+  Url := Lowercase(Trim(Url));
+  At := Pos('://', Url);
+  if At > 0 then Delete(Url, 1, At + 2);
+  At := Pos('/', Url);
+  if At > 0 then Url := Copy(Url, 1, At - 1);
+  At := Pos('@', Url);
+  if At > 0 then Delete(Url, 1, At);
+  if (Url <> '') and (Url[1] = '[') then
+  begin
+    At := Pos(']', Url);
+    if At > 0 then Url := Copy(Url, 2, At - 2);
+  end else
+  begin
+    At := Pos(':', Url);
+    if At > 0 then Url := Copy(Url, 1, At - 1);
+  end;
+  Result := Url;
+end;
+
+{ True for 100.64.0.0/10 (Tailscale CGNAT range). }
+function IsTailscaleIPv4(Host: String): Boolean;
+var
+  I, At, Part: Integer;
+  Parts: array[0..3] of Integer;
+begin
+  Result := False;
+  for I := 0 to 3 do
+  begin
+    At := Pos('.', Host);
+    if I = 3 then
+    begin
+      if At > 0 then Exit;
+      At := Length(Host) + 1;
+    end else if At = 0 then
+      Exit;
+    Part := StrToIntDef(Copy(Host, 1, At - 1), -1);
+    if (Part < 0) or (Part > 255) or (At = 1) then Exit;
+    Parts[I] := Part;
+    Delete(Host, 1, At);
+  end;
+  Result := (Parts[0] = 100) and (Parts[1] >= 64) and (Parts[1] <= 127);
+end;
+
+{ Only Tailscale IPs are accepted: 100.64.0.0/10 or fd7a:115c:a1e0::/48. }
+function IsTailscaleUrl(const Url: String): Boolean;
+var
+  Host: String;
+begin
+  Host := UrlHost(Url);
+  Result := (Host <> '') and (
+    IsTailscaleIPv4(Host) or
+    (Pos('fd7a:115c:a1e0:', Host) = 1));
+end;
+
 function HasToken: Boolean;
 begin
   Result := EnvironmentHas(ServiceEnvironment, TokenVar) or (GetEnv(TokenVar) <> '');
@@ -239,7 +302,7 @@ begin
   ConnPage := CreateInputQueryPage(RolePage.ID, 'Koneksi ke server monitoring',
     'Isi sesuai pendaftaran agent di server monitoring.',
     'Agent ID dan Site harus sama persis dengan perintah "php artisan monitor:register-agent <agent_id> <site>". Token ditampilkan sekali oleh perintah tersebut.');
-  ConnPage.Add('URL server monitoring (wajib https://):', False);
+  ConnPage.Add('URL server monitoring via IP Tailscale (https://100.x.y.z):', False);
   ConnPage.Add('Agent ID:', False);
   ConnPage.Add('Site:', False);
   ConnPage.Add('Token agent (kosongkan untuk memakai token yang sudah terpasang):', True);
@@ -250,7 +313,12 @@ begin
   Site := RoleSite(Role);
   if Role = 3 then AgentId := '';
   if HasExistingConfig then
+  begin
     ReadExistingConfig(Url, AgentId, Site);
+    { Older installs point at the datacenter LAN IP: switch them to the Tailscale address on upgrade. }
+    if not IsTailscaleUrl(Url) then
+      Url := '{#DefaultApiUrl}';
+  end;
   ConnPage.Values[0] := Param('APIURL', Url);
   ConnPage.Values[1] := Param('AGENTID', AgentId);
   ConnPage.Values[2] := Param('SITE', Site);
@@ -297,6 +365,9 @@ begin
     Exit;
   if Pos('https://', Lowercase(Trim(ConnPage.Values[0]))) <> 1 then
     Result := 'URL server monitoring wajib diawali https:// (agent menolak koneksi tanpa TLS).'
+  else if not IsTailscaleUrl(ConnPage.Values[0]) then
+    Result := 'URL server monitoring wajib memakai IP Tailscale (100.64.0.0/10, contoh https://100.101.2.3). ' +
+      'IP lokal data center atau IP publik tidak diizinkan.'
   else if Trim(ConnPage.Values[1]) = '' then
     Result := 'Agent ID wajib diisi.'
   else if Trim(ConnPage.Values[2]) = '' then
@@ -379,7 +450,7 @@ begin
   end;
   if Code = 2 then
     SuppressibleMsgBox('Agent terpasang, tetapi server monitoring ' + Trim(ConnPage.Values[0]) + ' belum bisa dihubungi dari server ini ' +
-      '(jaringan atau sertifikat TLS belum dipercaya). Data tetap diantrekan dan dikirim setelah koneksi pulih. Detail: ' + LogFile,
+      '(Tailscale belum login/terhubung, atau sertifikat TLS belum dipercaya). Data tetap diantrekan dan dikirim setelah koneksi pulih. Detail: ' + LogFile,
       mbInformation, MB_OK, IDOK);
 
   { The token lives only in the service's own environment: readable by the service, effective without reboot. }
