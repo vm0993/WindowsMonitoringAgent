@@ -65,8 +65,10 @@ if($c.Agent.Tailscale.Enabled){
   $ts=& $exe status --json | ConvertFrom-Json
   Write-Host "Tailscale: $($ts.BackendState) as $($ts.Self.HostName)"
   foreach($p in $c.Agent.Tailscale.Peers){
-    $peer=$ts.Peer.PSObject.Properties.Value | Where-Object {$_.HostName -eq $p.HostName -or $_.DNSName.Split('.')[0] -eq $p.HostName} | Select-Object -First 1
-    if(-not $peer){Write-Warning "Tailscale peer $($p.HostName) not found"; continue}
+    $peer=$null
+    if($p.Address){$peer=$ts.Peer.PSObject.Properties.Value | Where-Object {$_.TailscaleIPs -contains $p.Address} | Select-Object -First 1}
+    if(-not $peer){$peer=$ts.Peer.PSObject.Properties.Value | Where-Object {$_.HostName -eq $p.HostName -or ($_.DNSName -and $_.DNSName.Split('.')[0] -eq $p.HostName)} | Select-Object -First 1}
+    if(-not $peer){Write-Warning "Tailscale peer $($p.Code) ($($p.HostName) $($p.Address)) not found. Peers: $(($ts.Peer.PSObject.Properties.Value | ForEach-Object {"$($_.HostName) $($_.TailscaleIPs[0])"}) -join ', ')"; continue}
     Write-Host "Ping $($p.HostName) ($($peer.TailscaleIPs[0])): $(& $exe ping --c 1 --timeout 5s $peer.TailscaleIPs[0] 2>&1)"
   }
  }

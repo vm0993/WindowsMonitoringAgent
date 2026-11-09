@@ -130,7 +130,7 @@ public sealed class DeliveryAgent : BackgroundService
             routes,
             _store.PendingProbeCount(),
             _cfg.Syncthing.Enabled ? _cfg.Syncthing.Routes.Select(r=>new TargetInfo(r.Code,string.IsNullOrWhiteSpace(r.FolderLabel) ? r.FolderId : r.FolderLabel,r.RemoteName)).ToList() : null,
-            _cfg.Tailscale.Enabled ? _cfg.Tailscale.Peers.Select(p=>new TargetInfo(p.Code,p.HostName,p.HostName)).ToList() : null);
+            _cfg.Tailscale.Enabled ? _cfg.Tailscale.Peers.Select(p=>new TargetInfo(p.Code,p.HostName,string.IsNullOrWhiteSpace(p.Address) ? p.HostName : $"{p.HostName} {p.Address}".Trim())).ToList() : null);
         using var result=await http.PostAsJsonAsync("/api/monitoring/agent/heartbeat",heartbeat,stoppingToken);
         await EnsureSuccessAsync(result,stoppingToken);
         _lastHeartbeat=DateTimeOffset.UtcNow;

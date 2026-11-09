@@ -97,6 +97,8 @@ FS-UTAMA ──DFSR──▶ FS-MIRROR ──Syncthing (Send Only → Receive On
 
 Nama server, path, dan device ID di file contoh harus diganti dengan nilai sebenarnya.
 
+Saat upgrade, installer menyelaraskan `appsettings.json` dengan contoh perannya (`examples\appsettings.<AgentId>.json`), sehingga ketiga server selalu punya susunan folder, DFSR, Syncthing, Tailscale, dan Parity yang sama. Nilai khusus server tetap dipertahankan: URL API, AgentId, Site, path folder, nama komputer DFSR, device ID Syncthing, dan peer Tailscale. File lama disimpan sebagai `appsettings.json.bak-<waktu>`. Kalau AgentId bukan nama peran, jalankan `tools\configure.ps1 -InstallDir <folder> -SyncRole fs-dc` (opsi `-NoSync` untuk melewati penyelarasan).
+
 ### Peran pengukuran
 
 - **DFSR** diukur dari agent `FS-UTAMA` (utama → mirror, plus arah sebaliknya yang seharusnya tetap 0), termasuk status layanan DFSR di kedua server.
@@ -105,6 +107,7 @@ Nama server, path, dan device ID di file contoh harus diganti dengan nilai seben
   - `FS-DC` melaporkan item yang masih harus diterima dan **perubahan lokal** di folder Receive Only.
   - Keduanya memeriksa **tipe folder** (`ExpectedFolderType`) dan apakah koneksi lewat alamat Tailscale.
 - **Tailscale** diukur dua arah antara `FS-MIRROR` dan `FS-DC`: state daemon, peer online, latensi `tailscale ping`, dan jalur langsung atau relay DERP.
+  Peer di `Agent.Tailscale.Peers` dicocokkan lewat `Address` (IP Tailscale, disarankan) lalu `HostName` = **nama mesin di Tailscale** (mis. `dp01`), bukan nama peran `fs-mirror`. Pengukuran ini tidak bergantung pada Syncthing.
 - Agent tidak pernah mengubah konfigurasi DFSR, Syncthing, atau Tailscale.
 
 ### Persiapan

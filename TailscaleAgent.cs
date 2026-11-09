@@ -39,7 +39,7 @@ public sealed partial class TailscaleAgent : BackgroundService
                 catch(Exception ex)
                 {
                     _log.LogWarning(ex,"Tailscale probe failed for {Peer}",peer.Code);
-                    result=new TailscaleResult(Guid.NewGuid().ToString("N"),peer.Code,null,null,peer.HostName,null,null,null,null,null,null,Trim(ex.Message),now);
+                    result=new TailscaleResult(Guid.NewGuid().ToString("N"),peer.Code,null,null,Label(peer),null,null,null,null,null,null,Trim(ex.Message),now);
                 }
                 _store.AppendProbe(ProbeKind.Tailscale,result.Id,result,now);
             }
@@ -50,18 +50,24 @@ public sealed partial class TailscaleAgent : BackgroundService
     private async Task<TailscaleResult> ProbeAsync(TailscalePeer peer, JsonElement? status, string? statusError, DateTimeOffset now, CancellationToken stop)
     {
         var id=Guid.NewGuid().ToString("N");
-        if(status is null) return new(id,peer.Code,null,null,peer.HostName,null,null,null,null,null,null,Trim("tailscale status: "+statusError),now);
+        if(status is null) return new(id,peer.Code,null,null,Label(peer),null,null,null,null,null,null,Trim("tailscale status: "+statusError),now);
         var root=status.Value;
         var backend=Str(root,"BackendState");
         var self=root.TryGetProperty("Self",out var s) ? Str(s,"HostName") : null;
-        JsonElement? match=null;
-        if(root.TryGetProperty("Peer",out var peers) && peers.ValueKind==JsonValueKind.Object)
-            foreach(var p in peers.EnumerateObject())
-                if(Matches(p.Value,peer.HostName)) { match=p.Value; break; }
+        var all=root.TryGetProperty("Peer",out var peers) && peers.ValueKind==JsonValueKind.Object
+            ? peers.EnumerateObject().Select(p=>p.Value).ToList() : [];
+        var address=string.IsNullOrWhiteSpace(peer.Address) ? null : peer.Address.Trim();
+        // IP first (stable), then machine name: role names such as "fs-mirror" rarely equal the Tailscale machine name.
+        JsonElement? match=address is not null ? all.Cast<JsonElement?>().FirstOrDefault(p=>Ips(p!.Value).Contains(address,StringComparer.OrdinalIgnoreCase)) : null;
+        match??=string.IsNullOrWhiteSpace(peer.HostName) ? null : all.Cast<JsonElement?>().FirstOrDefault(p=>Matches(p!.Value,peer.HostName));
         if(match is null)
-            return new(id,peer.Code,self,backend,peer.HostName,null,false,null,null,null,null,"Peer not found in tailnet",now);
+        {
+            var known=string.Join(", ",all.Select(p=>$"{Str(p,"HostName")} ({Ips(p).FirstOrDefault()})"));
+            return new(id,peer.Code,self,backend,Label(peer),address,false,null,null,null,null,
+                Trim($"Peer '{(address ?? Label(peer))}' not found in tailnet (set Tailscale.Peers HostName/Address to the Tailscale machine name/IP). Peers seen: {(known.Length>0 ? known : "none")}"),now);
+        }
         var m=match.Value;
-        var ip=m.TryGetProperty("TailscaleIPs",out var ips) && ips.ValueKind==JsonValueKind.Array && ips.GetArrayLength()>0 ? ips[0].GetString() : null;
+        var ip=Ips(m).FirstOrDefault();
         var online=m.TryGetProperty("Online",out var o) && o.ValueKind is JsonValueKind.True or JsonValueKind.False ? o.GetBoolean() : (bool?)null;
         DateTimeOffset? lastSeen=DateTimeOffset.TryParse(Str(m,"LastSeen"),CultureInfo.InvariantCulture,DateTimeStyles.AssumeUniversal,out var ls) && ls.Year>2000 ? ls : null;
         string? path=null, relay=Str(m,"Relay"); double? latency=null; string? error=null;
@@ -81,8 +87,15 @@ public sealed partial class TailscaleAgent : BackgroundService
             }
             else error=Trim("Ping failed: "+(ping.StdOut+" "+ping.StdErr).Trim());
         }
-        return new(id,peer.Code,self,backend,Str(m,"HostName") ?? peer.HostName,ip,online,path,relay,latency,lastSeen,error,now);
+        return new(id,peer.Code,self,backend,NullIfEmpty(Str(m,"HostName")) ?? Label(peer),ip,online,path,relay,latency,lastSeen,error,now);
     }
+    // peer_host is required by the server: never send an empty name (a peer may be configured by Address only).
+    private static string Label(TailscalePeer p) =>
+        NullIfEmpty(p.HostName?.Trim()) ?? NullIfEmpty(p.Address?.Trim()) ?? p.Code;
+    private static string? NullIfEmpty(string? v) => string.IsNullOrEmpty(v) ? null : v;
+    private static List<string> Ips(JsonElement p) =>
+        p.TryGetProperty("TailscaleIPs",out var ips) && ips.ValueKind==JsonValueKind.Array
+            ? ips.EnumerateArray().Where(i=>i.ValueKind==JsonValueKind.String).Select(i=>i.GetString()!).ToList() : [];
     private static bool Matches(JsonElement p, string host)
     {
         if(string.Equals(Str(p,"HostName"),host,StringComparison.OrdinalIgnoreCase)) return true;

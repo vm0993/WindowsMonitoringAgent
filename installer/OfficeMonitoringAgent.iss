@@ -62,6 +62,10 @@ Source: "{#PublishDir}\appsettings.json"; DestDir: "{app}\examples"; DestName: "
 Source: "..\deploy\examples\*.json"; DestDir: "{app}\examples"; Flags: ignoreversion
 Source: "configure.ps1"; DestDir: "{app}\tools"; Flags: ignoreversion
 Source: "..\deploy\check-prerequisites.ps1"; DestDir: "{app}\tools"; Flags: ignoreversion
+Source: "..\deploy\diagnose.ps1"; DestDir: "{app}\tools"; Flags: ignoreversion
+Source: "..\deploy\switch-monitor.ps1"; DestDir: "{app}\tools"; Flags: ignoreversion
+Source: "..\deploy\dfsr-routes.ps1"; DestDir: "{app}\tools"; Flags: ignoreversion
+Source: "..\deploy\trust-server-cert.ps1"; DestDir: "{app}\tools"; Flags: ignoreversion
 #ifdef EmbeddedCert
 Source: "certs\monitoring.crt"; DestDir: "{app}\certs"; Flags: ignoreversion
 #endif

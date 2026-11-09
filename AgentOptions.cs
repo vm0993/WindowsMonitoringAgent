@@ -83,8 +83,10 @@ public sealed class TailscaleOptions
 public sealed class TailscalePeer
 {
     public string Code { get; set; } = "";
-    // Tailscale machine name (HostName or first label of the MagicDNS name).
+    // Tailscale machine name (HostName or first label of the MagicDNS name), e.g. "dp01" — not the role name.
     public string HostName { get; set; } = "";
+    // Optional Tailscale IP of the peer (100.x.y.z). Matched first, so a renamed machine is still found.
+    public string Address { get; set; } = "";
 }
 // Folder manifests compared by the server between a source and its replica (same Folder Code on both agents).
 public sealed class ParityOptions
